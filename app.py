@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
 st.title("📊 Trævol Log - Renodlad Extraktor")
-st.write("Extraherar ID, TID, VOLYM M3 och LITER utan onödiga kolumner.")
+st.write("Extraherar ID, TID, VOLYM M3 och LITER med finjusterad mätvärdesläsning.")
 
 @st.cache_resource
 def load_reader():
@@ -53,7 +53,7 @@ if uploaded_files:
                 if any(h in full_line_str for h in ["Trævol", "Proc", "Dato", "Kunde", "Tank"]):
                     continue
 
-                # Matcha ID (4 siffror + datum, t.ex. 705301-10-2026)
+                # Matcha ID (4 siffror + datum)
                 match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', full_line_str.replace(" ", ""))
                 if match:
                     proc = match.group(1)
@@ -64,17 +64,20 @@ if uploaded_files:
                     tid_match = re.search(r'(\d{2}:\d{2})', full_line_str)
                     tid = tid_match.group(1) if tid_match else "00:00"
 
-                    # Hitta numeriska värden
-                    numbers = re.findall(r'\d+[.,]\d+', full_line_str)
+                    # Hitta alla numeriska mönster (fångar både med komma, punkt eller rena heltal/decimaler)
+                    all_numbers = re.findall(r'\d+[.,]?\d*', full_line_str)
                     
                     volym = "0,00"
                     liter = "0,00"
 
-                    if len(numbers) >= 2:
-                        volym = numbers[0].replace('.', ',')
-                        liter = numbers[1].replace('.', ',')
-                    elif len(numbers) == 1:
-                        liter = numbers[0].replace('.', ',')
+                    # Filtrera bort datum och tid från nummerlistan så de inte förväxlas med mätvärden
+                    filtered_nums = [n for n in all_numbers if "-" not in n and ":" not in n and len(n) <= 6]
+
+                    if len(filtered_nums) >= 2:
+                        volym = filtered_nums[0].replace('.', ',')
+                        liter = filtered_nums[-1].replace('.', ',') # Det sista värdet är nästan alltid LITER/Optagelse
+                    elif len(filtered_nums) == 1:
+                        liter = filtered_nums[0].replace('.', ',')
 
                     all_extracted_rows.append({
                         "ID": id_combined,
