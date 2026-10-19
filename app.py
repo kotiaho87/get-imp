@@ -7,8 +7,8 @@ import re
 
 st.set_page_config(page_title="Trævol Log Extrakt", layout="wide")
 
-st.title("📊 Trævol Log - Extrahering utan sammanslagning")
-st.write("Ladda upp dina loggbilder nedan. Appen extraherar varje kolumn separat exakt som i bilden.")
+st.title("📊 Trævol Log - Exakt kolumnmappning")
+st.write("Ladda upp loggbilder. Kolumnerna Kg/m³ och L/m³ sätts automatiskt till 0,00.")
 
 @st.cache_resource
 def load_reader():
@@ -27,7 +27,6 @@ if uploaded_files:
             image = Image.open(uploaded_file)
             image_np = np.array(image)
             
-            # Kör OCR
             results = reader.readtext(image_np)
             
             # Gruppera rader baserat på Y-koordinaten
@@ -59,28 +58,21 @@ if uploaded_files:
                     proc = match.group(1)
                     dato = match.group(2)
                     
-                    # Kund (oftast Lager)
                     kunde = "Lager" if "Lager" in full_line_str else ""
 
-                    # Tid (t.ex. 00:37)
                     tid_match = re.search(r'(\d{2}:\d{2})', full_line_str)
                     tid = tid_match.group(1) if tid_match else "00:00"
 
-                    # Hitta alla numeriska värden på raden (t.ex. 0,00 eller 36,64)
+                    # Hitta numeriska värden på raden
                     numbers = re.findall(r'\d+[.,]\d+', full_line_str)
 
                     volym = "0,00"
                     udtag = "0,00"
-                    lm3 = "0,00"
 
-                    # Fördela siffrorna i rätt kolumner baserat på hur många kolumner som hittats
-                    if len(numbers) >= 3:
-                        volym = numbers[-3].replace('.', ',')
-                        udtag = numbers[-2].replace('.', ',')
-                        lm3 = numbers[-1].replace('.', ',')
-                    elif len(numbers) == 2:
-                        udtag = numbers[-2].replace('.', ',')
-                        lm3 = numbers[-1].replace('.', ',')
+                    # Om det finns värden, sätt Volym till första (oftast 0,00) och Udtag till det uppmätta värdet
+                    if len(numbers) >= 2:
+                        volym = numbers[0].replace('.', ',')
+                        udtag = numbers[1].replace('.', ',')
                     elif len(numbers) == 1:
                         udtag = numbers[0].replace('.', ',')
 
@@ -92,23 +84,23 @@ if uploaded_files:
                         "Total tid": tid,
                         "Volume m³": volym,
                         "Udtag liter": udtag,
-                        "L/m³": lm3,
+                        "L/m³": "0,00",
                         "Filnamn": uploaded_file.name
                     })
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades läsa in {len(df)} rader med separata kolumner!")
+        st.success(f"Lyckades läsa in {len(df)} rader!")
         st.dataframe(df)
 
-        output_file = "travlogg_separerad.xlsx"
+        output_file = "travlogg_rensad.xlsx"
         df.to_excel(output_file, index=False)
         
         with open(output_file, "rb") as f:
             st.download_button(
                 label="📥 Ladda ner färdig Excel-fil",
                 data=f,
-                file_name="travlogg_separerad.xlsx",
+                file_name="travlogg_rensad.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
