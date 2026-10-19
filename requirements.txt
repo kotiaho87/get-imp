@@ -1,0 +1,8 @@
+streamlit
+pandas
+openpyxl
+pillow
+numpy
+torch
+torchvision
+easyocr
