@@ -7,8 +7,8 @@ import re
 
 st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
-st.title("📊 Trævol Log - Renodlad Extraktor")
-st.write("Extraherar ID, TID, VOLYM M3 och LITER med finjusterad mätvärdesläsning.")
+st.title("📊 Trævol Log - Exakt Extraktor")
+st.write("Extraherar ID, TID, VOLYM M3 och LITER med intelligent sammanfogning av delade mätvärden.")
 
 @st.cache_resource
 def load_reader():
@@ -22,7 +22,7 @@ uploaded_files = st.file_uploader("Välj bilder (t.ex. 1(1).png)", type=["png", 
 if uploaded_files:
     all_extracted_rows = []
     
-    with st.spinner("Läser av och renodlar data..."):
+    with st.spinner("Läser av och analyserar bilder..."):
         for uploaded_file in uploaded_files:
             image = Image.open(uploaded_file)
             image_np = np.array(image)
@@ -53,31 +53,47 @@ if uploaded_files:
                 if any(h in full_line_str for h in ["Trævol", "Proc", "Dato", "Kunde", "Tank"]):
                     continue
 
+                # Rensa upp mellanslag runt decimaler som OCR delat upp (t.ex. "38 . 54" -> "38,54")
+                cleaned_line = re.sub(r'(\d+)\s*[.,]\s*(\d+)', r'\1,\2', full_line_str)
+
                 # Matcha ID (4 siffror + datum)
-                match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', full_line_str.replace(" ", ""))
+                match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', cleaned_line.replace(" ", ""))
                 if match:
                     proc = match.group(1)
                     dato = match.group(2)
                     id_combined = f"{proc}{dato}"
                     
                     # TID (HH:MM)
-                    tid_match = re.search(r'(\d{2}:\d{2})', full_line_str)
+                    tid_match = re.search(r'(\d{2}:\d{2})', cleaned_line)
                     tid = tid_match.group(1) if tid_match else "00:00"
 
-                    # Hitta alla numeriska mönster (fångar både med komma, punkt eller rena heltal/decimaler)
-                    all_numbers = re.findall(r'\d+[.,]?\d*', full_line_str)
+                    # Hitta alla giltiga mätvärden (tal med komma eller hela tal)
+                    raw_numbers = re.findall(r'\d+,\d+|\d+', cleaned_line)
                     
+                    # Filtrera bort så vi inte råkar ta med datumdelar eller timmar
+                    filtered_nums = []
+                    for num in raw_numbers:
+                        # Om numret är en del av ett datum eller klockslag, hoppa över det
+                        if num in id_combined or num in tid or len(num) > 6:
+                            continue
+                        filtered_nums.append(num)
+
                     volym = "0,00"
                     liter = "0,00"
 
-                    # Filtrera bort datum och tid från nummerlistan så de inte förväxlas med mätvärden
-                    filtered_nums = [n for n in all_numbers if "-" not in n and ":" not in n and len(n) <= 6]
-
+                    # Tilldela värden baserat på tillgång
                     if len(filtered_nums) >= 2:
-                        volym = filtered_nums[0].replace('.', ',')
-                        liter = filtered_nums[-1].replace('.', ',') # Det sista värdet är nästan alltid LITER/Optagelse
+                        volym = filtered_nums[0]
+                        # Det sista signifikanta mätvärdet på raden är alltid LITER/Optagelse
+                        liter = filtered_nums[-1]
                     elif len(filtered_nums) == 1:
-                        liter = filtered_nums[0].replace('.', ',')
+                        liter = filtered_nums[0]
+
+                    # Säkerställ att om det saknas decimaltecken läggs ,00 till för snygg formatering
+                    if "," not in volym:
+                        volym = f"{volym},00"
+                    if "," not in liter:
+                        liter = f"{liter},00"
 
                     all_extracted_rows.append({
                         "ID": id_combined,
@@ -89,7 +105,7 @@ if uploaded_files:
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader!")
+        st.success(f"Lyckades extrahera {len(df)} rader med förbättrad mätavläsning!")
         st.dataframe(df)
 
         output_file = "travlogg_renodlad.xlsx"
