@@ -7,8 +7,8 @@ import re
 
 st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
-st.title("📊 Trævol Log - Slutgiltig Extraktor")
-st.write("Extraherar data med strikt åtskilda kolumner och säkra tidsformat.")
+st.title("📊 Trævol Log - Robust Extraktor")
+st.write("Extraherar loggar med intelligent korrigering av saknade decimaler.")
 
 @st.cache_resource
 def load_reader():
@@ -62,34 +62,52 @@ if uploaded_files:
                 dato = id_match.group(2)
                 id_combined = f"{proc}{dato}"
 
-                # 2. Hitta TID – KRÄVER strikt HH:MM med kolon (kan ej förväxlas med decimaltal)
+                # 2. Hitta TID (HH:MM med kolon)
                 tid_match = re.search(r'\b([0-2]\d:[0-5]\d)\b', full_line_str)
                 tid = tid_match.group(1) if tid_match else "00:00"
 
-                # 3. Hitta alla mätvärden (tal med punkt eller komma, ex. 0,00 eller 34,87)
-                # Vi rensar bort ID-delarna först så de inte stör
+                # 3. Hitta alla tal (både med decimaltecken och rena heltal som t.ex. 3252 eller 0)
                 stripped_line = full_line_str.replace(proc, "").replace(dato, "").replace(tid, "")
                 
-                # Hitta alla tal som har decimaler (eller rena heltal om det behövs)
-                measurements = re.findall(r'\d+[.,]\d+', stripped_line)
+                # Fånga både decimaltal och rena heltal/siffersekvenser på raden
+                raw_tokens = re.findall(r'\d+[.,]?\d*', stripped_line)
+                
+                # Filtrera bort oönskade skräptokens
+                measurements = []
+                for token in raw_tokens:
+                    clean_t = token.replace('.', '').replace(',', '')
+                    if len(clean_t) >= 1 and clean_t != proc[:2]: # undvik rena ID-delar
+                        measurements.append(token)
 
                 volym = "0,00"
                 liter = "0,00"
 
+                # Mappa mätvärden
                 if len(measurements) >= 2:
-                    volym = measurements[0].replace('.', ',')
-                    liter = measurements[1].replace('.', ',')
+                    volym = measurements[0]
+                    liter = measurements[1]
                 elif len(measurements) == 1:
-                    liter = measurements[0].replace('.', ',')
+                    liter = measurements[0]
 
-                # Stöd för om volym/liter saknar decimaler men har 4 siffror (t.ex. 3487 -> 34,87)
+                # Intelligent formatering av VOLYM M3
+                volym = volym.replace('.', ',')
                 if "," not in volym:
-                    volym = f"{volym},00"
+                    if len(volym) == 1 or volym == "0":
+                        volym = f"{volym},00"
+                    elif len(volym) == 4: # t.ex. 0000 -> 0,00
+                        volym = f"{volym[:1]},{volym[1:]}"
+
+                # Intelligent formatering av LITER (säkrar att saknat komma läggs till)
+                liter = liter.replace('.', ',')
                 if "," not in liter:
-                    if len(liter) == 4:
+                    if len(liter) == 4: # t.ex. 3487 -> 34,87
                         liter = f"{liter[:2]},{liter[2:]}"
-                    else:
+                    elif len(liter) == 5: # t.ex. 13487 -> 134,87
+                        liter = f"{liter[:3]},{liter[3:]}"
+                    elif len(liter) <= 2:
                         liter = f"{liter},00"
+                    else:
+                        liter = f"{liter[:2]},{liter[2:]}"
 
                 all_extracted_rows.append({
                     "ID": id_combined,
@@ -101,7 +119,7 @@ if uploaded_files:
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader felfritt!")
+        st.success(f"Lyckades extrahera {len(df)} rader med robust decimalhantering!")
         st.dataframe(df)
 
         output_file = "travlogg_renodlad.xlsx"
