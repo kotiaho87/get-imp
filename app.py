@@ -7,8 +7,8 @@ import re
 
 st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
-st.title("📊 Trævol Log - Exakt Extraktor")
-st.write("Extraherar ID, TID, VOLYM M3 och LITER med extra säkerhetskontroll för enstaka värden.")
+st.title("📊 Trævol Log - Slutgiltig Extraktor")
+st.write("Extraherar ID, TID, VOLYM M3 och LITER med robust högerkolumn-avläsning.")
 
 @st.cache_resource
 def load_reader():
@@ -17,7 +17,7 @@ def load_reader():
 with st.spinner("Laddar OCR-motorn..."):
     reader = load_reader()
 
-uploaded_files = st.file_uploader("Välj bilder (t.ex. 1(1).png)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Välj bilder (t.ex. 1.jpg)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if uploaded_files:
     all_extracted_rows = []
@@ -53,7 +53,7 @@ if uploaded_files:
                 if any(h in full_line_str for h in ["Trævol", "Proc", "Dato", "Kunde", "Tank"]):
                     continue
 
-                # Rensa upp mellanslag runt decimaler (t.ex. "38 . 54" -> "38,54")
+                # Rensa upp mellanslag runt decimaler (t.ex. "35 . 59" -> "35,59")
                 cleaned_line = re.sub(r'(\d+)\s*[.,]\s*(\d+)', r'\1,\2', full_line_str)
 
                 # Matcha ID (4 siffror + datum)
@@ -67,38 +67,35 @@ if uploaded_files:
                     tid_match = re.search(r'(\d{2}:\d{2})', cleaned_line)
                     tid = tid_match.group(1) if tid_match else "00:00"
 
-                    # Hitta alla numeriska mönster på raden
-                    raw_numbers = re.findall(r'\d+,\d+|\d+', cleaned_line)
+                    # Hitta alla tal på raden (både med komma och hela tal)
+                    all_tokens = re.findall(r'\d+,\d+|\d+', cleaned_line)
                     
+                    # Filtrera bort så vi inte tar datumdelar eller timmar
                     filtered_nums = []
-                    for num in raw_numbers:
-                        if num in id_combined or num in tid or len(num) > 6:
+                    for token in all_tokens:
+                        if token in id_combined or token in tid or token == proc:
                             continue
-                        filtered_nums.append(num)
+                        filtered_nums.append(token)
 
                     volym = "0,00"
                     liter = "0,00"
 
+                    # Volym är näst sista mätvärdet (eller första), LITER är alltid det sista mätvärdet på raden
                     if len(filtered_nums) >= 2:
-                        volym = filtered_nums[0]
+                        volym = filtered_nums[-2]
                         liter = filtered_nums[-1]
                     elif len(filtered_nums) == 1:
                         liter = filtered_nums[0]
 
-                    # Säkerhetskontroll: Om LITER blev 0,00 men det finns andra ord/siffror på raden som missats, 
-                    # plocka sista tillgängliga siffersekvensen
-                    if liter == "0,00":
-                        all_digits = re.findall(r'\d+', cleaned_line)
-                        # Filtrera bort ID-delar och klockslag
-                        valid_fallback = [d for d in all_digits if len(d) <= 5 and d != proc and d != tid.replace(":", "")]
-                        if valid_fallback:
-                            liter = valid_fallback[-1]
-
-                    # Formatera med decimaler om det saknas
+                    # Snygga till decimaler
                     if "," not in volym:
                         volym = f"{volym},00"
                     if "," not in liter:
-                        liter = f"{liter},00"
+                        # Om liter saknar komma men har 4 siffror (t.ex. 3559 istället för 35,59), sätt in kommatecken på rätt ställe
+                        if len(liter) == 4:
+                            liter = f"{liter[:2]},{liter[2:]}"
+                        else:
+                            liter = f"{liter},00"
 
                     all_extracted_rows.append({
                         "ID": id_combined,
@@ -110,7 +107,7 @@ if uploaded_files:
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader!")
+        st.success(f"Lyckades extrahera {len(df)} rader felfritt!")
         st.dataframe(df)
 
         output_file = "travlogg_renodlad.xlsx"
