@@ -1,8 +1,7 @@
+streamlit-cropper
+easyocr
 streamlit
 pandas
-openpyxl
-pillow
+PIL
 numpy
 torch
-torchvision
-easyocr
