@@ -7,8 +7,8 @@ import re
 
 st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
-st.title("📊 Trævol Log - Positionsbaserad Extraktor")
-st.write("Extraherar data kolumn för kolumn baserat på bildens layout.")
+st.title("📊 Trævol Log - Exakt & Säkri Extraktor")
+st.write("Extraherar ID, TID, VOLYM M3 och LITER med separata mönsterfilter för att förhindra kolumnkrockar.")
 
 @st.cache_resource
 def load_reader():
@@ -17,12 +17,12 @@ def load_reader():
 with st.spinner("Laddar OCR-motorn..."):
     reader = load_reader()
 
-uploaded_files = st.file_uploader("Välj bilder (t.ex. 1.jpg)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Välj bilder", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if uploaded_files:
     all_extracted_rows = []
     
-    with st.spinner("Läser av och analyserar bilders layout..."):
+    with st.spinner("Läser av och analyserar bilder..."):
         for uploaded_file in uploaded_files:
             image = Image.open(uploaded_file)
             image_np = np.array(image)
@@ -45,7 +45,6 @@ if uploaded_files:
             sorted_y = sorted(lines.keys())
 
             for y in sorted_y:
-                # Sortera elementen på raden från vänster till höger (X-koordinat)
                 row_items = sorted(lines[y], key=lambda x: x[0])
                 line_text = [item[1] for item in row_items]
                 full_line_str = " ".join(line_text)
@@ -57,65 +56,54 @@ if uploaded_files:
                 # Rensa upp mellanslag runt decimaler
                 cleaned_line = re.sub(r'(\d+)\s*[.,]\s*(\d+)', r'\1,\2', full_line_str)
 
-                # Matcha ID (4 siffror + datum)
-                match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', cleaned_line.replace(" ", ""))
-                if match:
-                    proc = match.group(1)
-                    dato = match.group(2)
-                    id_combined = f"{proc}{dato}"
-                    
-                    # TID (HH:MM)
-                    tid_match = re.search(r'(\d{2}:\d{2})', cleaned_line)
-                    tid = tid_match.group(1) if tid_match else "00:00"
+                # 1. Hitta ID (4 siffror + datum, t.ex. 711003-10-2026)
+                id_match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', cleaned_line.replace(" ", ""))
+                if not id_match:
+                    continue
+                
+                proc = id_match.group(1)
+                dato = id_match.group(2)
+                id_combined = f"{proc}{dato}"
 
-                    # Plocka ut alla numeriska mönster som faktiskt förekommer som mätvärden på raden
-                    all_tokens = re.findall(r'\d+,\d+|\d+', cleaned_line)
-                    
-                    filtered_nums = []
-                    for token in all_tokens:
-                        if token in id_combined or token in tid or token == proc:
-                            continue
-                        filtered_nums.append(token)
+                # 2. Hitta TID (exakt HH:MM format)
+                tid_match = re.search(r'(\d{2}:\d{2})', cleaned_line)
+                tid = tid_match.group(1) if tid_match else "00:00"
 
-                    volym = "0,00"
-                    liter = "0,00"
+                # Ta bort ID och TID ur strängen temporärt för att säkert komma åt mätvärdena
+                stripped_line = cleaned_line.replace(proc, "").replace(dato, "").replace(tid, "")
 
-                    # Om vi har minst 2 mätvärden (eller nollor) efter varandra:
-                    # På dessa loggar ligger Volym m³ alltid först (oftast 0,00) och Liter/Kg därefter.
-                    if len(filtered_nums) >= 2:
-                        possible_vol = filtered_nums[0]
-                        
-                        # Om volymen tolkats som en ensam "3" eller "3,00" men vi vet att den ska vara 0,00 om den ligger på positionen för nollor:
-                        # Vi tillåter riktiga volymer (t.ex. 1,00 eller 2,50), men en ensam "3" utan rimlig förklaring sätts till 0,00.
-                        if possible_vol in ["3", "3,00"]:
-                            volym = "0,00"
-                        else:
-                            volym = possible_vol
-                            
-                        liter = filtered_nums[1]
-                    elif len(filtered_nums) == 1:
-                        liter = filtered_nums[0]
+                # 3. Hitta alla decimaltal/mätvärden i resten av raden (t.ex. 0,00 eller 35,49)
+                measurements = re.findall(r'\d+[.,]\d+', stripped_line)
 
-                    # Formatering av decimaler
-                    if "," not in volym:
-                        volym = f"{volym},00"
-                    if "," not in liter:
-                        if len(liter) == 4:
-                            liter = f"{liter[:2]},{liter[2:]}"
-                        else:
-                            liter = f"{liter},00"
+                volym = "0,00"
+                liter = "0,00"
 
-                    all_extracted_rows.append({
-                        "ID": id_combined,
-                        "TID": tid,
-                        "VOLYM M3": volym,
-                        "LITER": liter,
-                        "Filnamn": uploaded_file.name
-                    })
+                if len(measurements) >= 2:
+                    volym = measurements[0].replace('.', ',')
+                    liter = measurements[1].replace('.', ',')
+                elif len(measurements) == 1:
+                    liter = measurements[0].replace('.', ',')
+
+                # Säkerställ att decimaler finns med
+                if "," not in volym:
+                    volym = f"{volym},00"
+                if "," not in liter:
+                    if len(liter) == 4:
+                        liter = f"{liter[:2]},{liter[2:]}"
+                    else:
+                        liter = f"{liter},00"
+
+                all_extracted_rows.append({
+                    "ID": id_combined,
+                    "TID": tid,
+                    "VOLYM M3": volym,
+                    "LITER": liter,
+                    "Filnamn": uploaded_file.name
+                })
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader!")
+        st.success(f"Lyckades extrahera {len(df)} rader utan kolumnkrockar!")
         st.dataframe(df)
 
         output_file = "travlogg_renodlad.xlsx"
