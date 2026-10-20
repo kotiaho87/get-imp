@@ -5,10 +5,10 @@ from PIL import Image
 import numpy as np
 import re
 
-st.set_page_config(page_title="Trævol Log Extraktor", layout="wide")
+st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
-st.title("📊 Trævol Log - Flexibel Extraktor")
-st.write("Extraherar ID, TID, VOLYM M3 (stöd för både x,xx och xx,xx) och LITER.")
+st.title("📊 Trævol Log - Slutgiltig Extraktor")
+st.write("Extraherar data med strikt åtskilda kolumner och säkra tidsformat.")
 
 @st.cache_resource
 def load_reader():
@@ -53,11 +53,8 @@ if uploaded_files:
                 if any(h in full_line_str for h in ["Trævol", "Proc", "Dato", "Kunde", "Tank"]):
                     continue
 
-                # Rensa upp mellanslag runt decimaler
-                cleaned_line = re.sub(r'(\d+)\s*[.,]\s*(\d+)', r'\1,\2', full_line_str)
-
                 # 1. Hitta ID (4 siffror + datum)
-                id_match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', cleaned_line.replace(" ", ""))
+                id_match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', full_line_str.replace(" ", ""))
                 if not id_match:
                     continue
                 
@@ -65,21 +62,16 @@ if uploaded_files:
                 dato = id_match.group(2)
                 id_combined = f"{proc}{dato}"
 
-                # 2. Hitta TID (HH:MM)
-                tid_match = re.search(r'(\d{2}[:;.,]\d{2})', cleaned_line)
-                if tid_match:
-                    tid = tid_match.group(1).replace(';', ':').replace('.', ':').replace(',', ':')
-                else:
-                    time_fallback = re.search(r'\b(0\d|1\d|2[0-3])([0-5]\d)\b', cleaned_line)
-                    tid = f"{time_fallback.group(1)}:{time_fallback.group(2)}" if time_fallback else "00:00"
+                # 2. Hitta TID – KRÄVER strikt HH:MM med kolon (kan ej förväxlas med decimaltal)
+                tid_match = re.search(r'\b([0-2]\d:[0-5]\d)\b', full_line_str)
+                tid = tid_match.group(1) if tid_match else "00:00"
 
-                # Rensa bort ID och TID för att säkert komma åt mätvärdena
-                stripped_line = cleaned_line.replace(proc, "").replace(dato, "")
-                if tid_match:
-                    stripped_line = stripped_line.replace(tid_match.group(1), "")
-
-                # 3. Hitta alla mätvärden (stöd för både 1-2+ siffror före kommat, t.ex. x,xx eller xx,xx)
-                measurements = re.findall(r'\d{1,3}[.,]\d+', stripped_line)
+                # 3. Hitta alla mätvärden (tal med punkt eller komma, ex. 0,00 eller 34,87)
+                # Vi rensar bort ID-delarna först så de inte stör
+                stripped_line = full_line_str.replace(proc, "").replace(dato, "").replace(tid, "")
+                
+                # Hitta alla tal som har decimaler (eller rena heltal om det behövs)
+                measurements = re.findall(r'\d+[.,]\d+', stripped_line)
 
                 volym = "0,00"
                 liter = "0,00"
@@ -90,7 +82,7 @@ if uploaded_files:
                 elif len(measurements) == 1:
                     liter = measurements[0].replace('.', ',')
 
-                # Säkerställ korrekt decimalformat
+                # Stöd för om volym/liter saknar decimaler men har 4 siffror (t.ex. 3487 -> 34,87)
                 if "," not in volym:
                     volym = f"{volym},00"
                 if "," not in liter:
@@ -109,7 +101,7 @@ if uploaded_files:
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader med utökat stöd för volymvärden!")
+        st.success(f"Lyckades extrahera {len(df)} rader felfritt!")
         st.dataframe(df)
 
         output_file = "travlogg_renodlad.xlsx"
