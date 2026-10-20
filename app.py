@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 import easyocr
 from PIL import Image
+from streamlit_cropper import st_cropper
 import numpy as np
 import re
 
-st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
+st.set_page_config(page_title="Trævol Log - Visuell Extraktor", layout="wide")
 
-st.title("📊 Trævol Log - Robust Extraktor")
-st.write("Extraherar loggar med intelligent korrigering av saknade decimaler.")
+st.title("📊 Trævol Log - Visuell Rutframkallare")
+st.write("Ladda upp bilden, dra en ruta över tabellen och extrahera värdena direkt till Excel.")
 
 @st.cache_resource
 def load_reader():
@@ -17,16 +18,20 @@ def load_reader():
 with st.spinner("Laddar OCR-motorn..."):
     reader = load_reader()
 
-uploaded_files = st.file_uploader("Välj bilder", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+uploaded_file = st.file_uploader("Välj en skärmdumpsbild", type=["png", "jpg", "jpeg"])
 
-if uploaded_files:
-    all_extracted_rows = []
+if uploaded_file:
+    img = Image.open(uploaded_file)
     
-    with st.spinner("Läser av och analyserar bilder..."):
-        for uploaded_file in uploaded_files:
-            image = Image.open(uploaded_file)
-            image_np = np.array(image)
-            
+    st.subheader("1. Markera tabellen i bilden")
+    st.write("Dra i hörnen på rutan nedan så att den enbart täcker själva logg-tabellen (exkludera menyer och sidhuvuden).")
+    
+    # Interaktiv rutframkallare direkt i gränssnittet
+    cropped_img = st_cropper(img, realtime_update=True, box_color='#FF4B4B', aspect_ratio=None)
+    
+    if st.button("🚀 Extrahera data från markerat område"):
+        with st.spinner("Läser av den markerade rutan..."):
+            image_np = np.array(cropped_img)
             results = reader.readtext(image_np)
             
             # Gruppera rader baserat på Y-koordinaten
@@ -43,17 +48,14 @@ if uploaded_files:
                     lines[y_center] = [(bbox[0][0], text.strip())]
 
             sorted_y = sorted(lines.keys())
+            all_extracted_rows = []
 
             for y in sorted_y:
                 row_items = sorted(lines[y], key=lambda x: x[0])
                 line_text = [item[1] for item in row_items]
                 full_line_str = " ".join(line_text)
 
-                # Ignorera rubriker
-                if any(h in full_line_str for h in ["Trævol", "Proc", "Dato", "Kunde", "Tank"]):
-                    continue
-
-                # 1. Hitta ID (4 siffror + datum)
+                # Hitta ID (4 siffror + datum)
                 id_match = re.search(r'(\d{4})(\d{2}-\d{2}-\d{4})', full_line_str.replace(" ", ""))
                 if not id_match:
                     continue
@@ -62,75 +64,62 @@ if uploaded_files:
                 dato = id_match.group(2)
                 id_combined = f"{proc}{dato}"
 
-                # 2. Hitta TID (HH:MM med kolon)
+                # Hitta TID (HH:MM med kolon)
                 tid_match = re.search(r'\b([0-2]\d:[0-5]\d)\b', full_line_str)
                 tid = tid_match.group(1) if tid_match else "00:00"
 
-                # 3. Hitta alla tal (både med decimaltecken och rena heltal som t.ex. 3252 eller 0)
+                # Plocka mätvärden
                 stripped_line = full_line_str.replace(proc, "").replace(dato, "").replace(tid, "")
-                
-                # Fånga både decimaltal och rena heltal/siffersekvenser på raden
                 raw_tokens = re.findall(r'\d+[.,]?\d*', stripped_line)
                 
-                # Filtrera bort oönskade skräptokens
                 measurements = []
                 for token in raw_tokens:
                     clean_t = token.replace('.', '').replace(',', '')
-                    if len(clean_t) >= 1 and clean_t != proc[:2]: # undvik rena ID-delar
+                    if len(clean_t) >= 1:
                         measurements.append(token)
 
                 volym = "0,00"
                 liter = "0,00"
 
-                # Mappa mätvärden
                 if len(measurements) >= 2:
                     volym = measurements[0]
                     liter = measurements[1]
                 elif len(measurements) == 1:
                     liter = measurements[0]
 
-                # Intelligent formatering av VOLYM M3
+                # Formatering
                 volym = volym.replace('.', ',')
                 if "," not in volym:
-                    if len(volym) == 1 or volym == "0":
-                        volym = f"{volym},00"
-                    elif len(volym) == 4: # t.ex. 0000 -> 0,00
-                        volym = f"{volym[:1]},{volym[1:]}"
+                    volym = f"{volym},00"
 
-                # Intelligent formatering av LITER (säkrar att saknat komma läggs till)
                 liter = liter.replace('.', ',')
                 if "," not in liter:
-                    if len(liter) == 4: # t.ex. 3487 -> 34,87
+                    if len(liter) == 4:
                         liter = f"{liter[:2]},{liter[2:]}"
-                    elif len(liter) == 5: # t.ex. 13487 -> 134,87
-                        liter = f"{liter[:3]},{liter[3:]}"
-                    elif len(liter) <= 2:
-                        liter = f"{liter},00"
                     else:
-                        liter = f"{liter[:2]},{liter[2:]}"
+                        liter = f"{liter},00"
 
                 all_extracted_rows.append({
                     "ID": id_combined,
                     "TID": tid,
                     "VOLYM M3": volym,
-                    "LITER": liter,
-                    "Filnamn": uploaded_file.name
+                    "LITER": liter
                 })
 
-    if all_extracted_rows:
-        df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader med robust decimalhantering!")
-        st.dataframe(df)
+        if all_extracted_rows:
+            df = pd.DataFrame(all_extracted_rows)
+            st.success(f"Lyckades extrahera {len(df)} rader från ditt markerade område!")
+            st.dataframe(df)
 
-        output_file = "travlogg_renodlad.xlsx"
-        df.to_excel(output_file, index=False)
-        
-        with open(output_file, "rb") as f:
-            st.download_button(
-                label="📥 Ladda ner färdig Excel-fil",
-                data=f,
-                file_name="travlogg_renodlad.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    else:
-        st.error("Inga rader kunde hittas. Kontrollera att bilderna är tydliga.")
+            output_file = "travlogg_renodlad.xlsx"
+            df.to_excel(output_file, index=False)
+            
+            with open(output_file, "rb") as f:
+                st.download_button(
+                    label="📥 Ladda ner färdig Excel-fil",
+                    data=f,
+                    file_name="travlogg_renodlad.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.warning("Inga rader kunde hittas i det markerade området. Justera rutan och försök igen.")
