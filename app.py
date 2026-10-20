@@ -7,8 +7,8 @@ import re
 
 st.set_page_config(page_title="Trævol Log Omvandlare", layout="wide")
 
-st.title("📊 Trævol Log - Slutgiltig Extraktor")
-st.write("Extraherar ID, TID, VOLYM M3 och LITER med robust högerkolumn-avläsning.")
+st.title("📊 Trævol Log - Korrekt Kolumnmappning")
+st.write("Extraherar ID, TID, VOLYM M3 och LITER med exakt ordning på mätvärdena.")
 
 @st.cache_resource
 def load_reader():
@@ -67,10 +67,10 @@ if uploaded_files:
                     tid_match = re.search(r'(\d{2}:\d{2})', cleaned_line)
                     tid = tid_match.group(1) if tid_match else "00:00"
 
-                    # Hitta alla tal på raden (både med komma och hela tal)
+                    # Hitta alla tal på raden
                     all_tokens = re.findall(r'\d+,\d+|\d+', cleaned_line)
                     
-                    # Filtrera bort så vi inte tar datumdelar eller timmar
+                    # Filtrera bort datumdelar och tid
                     filtered_nums = []
                     for token in all_tokens:
                         if token in id_combined or token in tid or token == proc:
@@ -80,10 +80,13 @@ if uploaded_files:
                     volym = "0,00"
                     liter = "0,00"
 
-                    # Volym är näst sista mätvärdet (eller första), LITER är alltid det sista mätvärdet på raden
-                    if len(filtered_nums) >= 2:
-                        volym = filtered_nums[-2]
-                        liter = filtered_nums[-1]
+                    # Volym är första mätvärdet (oftast 0,00), Liter är det som kommer i mitten/strax före slutet
+                    if len(filtered_nums) >= 3:
+                        volym = filtered_nums[0]
+                        liter = filtered_nums[1] # Det riktiga mätvärdet ligger här
+                    elif len(filtered_nums) == 2:
+                        volym = filtered_nums[0]
+                        liter = filtered_nums[1]
                     elif len(filtered_nums) == 1:
                         liter = filtered_nums[0]
 
@@ -91,7 +94,6 @@ if uploaded_files:
                     if "," not in volym:
                         volym = f"{volym},00"
                     if "," not in liter:
-                        # Om liter saknar komma men har 4 siffror (t.ex. 3559 istället för 35,59), sätt in kommatecken på rätt ställe
                         if len(liter) == 4:
                             liter = f"{liter[:2]},{liter[2:]}"
                         else:
@@ -107,7 +109,7 @@ if uploaded_files:
 
     if all_extracted_rows:
         df = pd.DataFrame(all_extracted_rows)
-        st.success(f"Lyckades extrahera {len(df)} rader felfritt!")
+        st.success(f"Lyckades extrahera {len(df)} rader med korrekta kolumner!")
         st.dataframe(df)
 
         output_file = "travlogg_renodlad.xlsx"
